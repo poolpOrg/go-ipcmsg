@@ -26,8 +26,10 @@ import (
 
 const IPCMSG_HEADER_SIZE = 15
 
+type IPCMsgType uint32
+
 type IPCMsgHdr struct {
-	Type   uint32
+	Type   IPCMsgType
 	Size   uint16
 	HasFd  uint8
 	Peerid uint32
@@ -193,14 +195,14 @@ func Channel(peerid int, fd int) (chan IPCMessage, chan IPCMessage) {
 	return r, w
 }
 
-func Message(type_ uint32, data []byte) IPCMessage {
-	return MessageWithFd(type_, data, -1)
+func Message(msgtype IPCMsgType, data []byte) IPCMessage {
+	return MessageWithFd(msgtype, data, -1)
 }
 
-func MessageWithFd(type_ uint32, data []byte, fd int) IPCMessage {
+func MessageWithFd(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 	msg := IPCMessage{}
 	msg.Hdr = IPCMsgHdr{}
-	msg.Hdr.Type = type_
+	msg.Hdr.Type = msgtype
 	msg.Hdr.Size = uint16(len(data))
 	if fd == -1 {
 		msg.Hdr.HasFd = 0
