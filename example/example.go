@@ -102,14 +102,14 @@ func dispatcher(processname string, r chan ipcmsg.IPCMessage, w chan ipcmsg.IPCM
 		case <-time.After(1 * time.Second):
 			message := messages[rand.Intn(len(messages))]
 			if rand.Int()%5 != 0 {
-				log.Printf("[%s] sending message %s to child", processname, message)
+				log.Printf("[%s] sending message %s", processname, message)
 				w <- ipcmsg.Message(42, []byte(message))
 			} else {
 				fd, err := syscall.Open(os.Args[0], 0700, 0)
 				if err != nil {
 					log.Fatal(err)
 				}
-				log.Printf("[%s] sending message %s to child, fd attached", processname, message)
+				log.Printf("[%s] sending message %s, fd attached", processname, message)
 				w <- ipcmsg.MessageWithFd(42, []byte(message), fd)
 			}
 
