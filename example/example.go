@@ -85,21 +85,34 @@ func fork_child() (int, int) {
 	return pid, sp[1]
 }
 
+const (
+	IPCMSG_PING  ipcmsg.IPCMsgType = iota
+	IPCMSG_HELLO ipcmsg.IPCMsgType = iota
+)
+
 // parent process main routine, forks a child then sets up an ipcmsg
 // Channel on the socketpair, associating a handler for msg type 42.
 //
-func parentDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+func parentDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
+}
+
+func parentDispatcherHELLO(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
 }
 
 func parent() {
 	pid, fd := fork_child()
 	channel := ipcmsg.NewChannel(pid, fd)
-	channel.Handler(42, parentDispatcher)
+	channel.Handler(IPCMSG_PING, parentDispatcherPING)
+	channel.Handler(IPCMSG_HELLO, parentDispatcherHELLO)
 	go channel.Dispatch()
 
 	for {
-		channel.Write(42, []byte("PING"), -1)
+		channel.Write(IPCMSG_PING, []byte("PING"), -1)
+		time.Sleep(1 * time.Second)
+
+		channel.Write(IPCMSG_HELLO, []byte("HELLO"), -1)
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -107,13 +120,19 @@ func parent() {
 // child process main routine, sets up an ipcmsg Channel on fd 3,
 // associating a handler for msg type 42.
 //
-func childDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+func childDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
 	channel.Reply(msg, []byte("PONG"), -1)
 }
 
+func childDispatcherHELLO(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
+	channel.Reply(msg, []byte("HELLO"), -1)
+}
+
 func child() {
 	channel := ipcmsg.NewChannel(os.Getppid(), 3)
-	channel.Handler(42, childDispatcher)
+	channel.Handler(IPCMSG_PING, childDispatcherPING)
+	channel.Handler(IPCMSG_HELLO, childDispatcherHELLO)
 	channel.Dispatch()
 }
