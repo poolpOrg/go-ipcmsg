@@ -1,7 +1,7 @@
 # go-ipcmsg
 
 **WIP:**
-This is work in progress, do not use for anything serious.
+This is work in progress.
 
 The `go-ipcmsg` package provides a simple mechanism for communication between
 local processes using sockets.
