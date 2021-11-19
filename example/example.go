@@ -17,8 +17,8 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"os/exec"
 	"syscall"
@@ -85,62 +85,37 @@ func fork_child() (int, int) {
 	return pid, sp[1]
 }
 
-// a showcase dispatcher function that's shared by parent and child:
-// - consume messages as they arrive on read channel
-// - emit a message every second on write channel, some with an fd
-//
-func dispatcher(processname string, r chan ipcmsg.IPCMessage, w chan ipcmsg.IPCMessage) {
-	for {
-		messages := []string{
-			"foobarbazqux",
-			"barbazquxfoo",
-			"bazquxfoobar",
-			"quxfoobarbaz",
-		}
-
-		select {
-		case <-time.After(1 * time.Second):
-			message := messages[rand.Intn(len(messages))]
-			if rand.Int()%5 != 0 {
-				log.Printf("[%s] sending message %s", processname, message)
-				w <- ipcmsg.Message(42, []byte(message), -1)
-			} else {
-				fd, err := syscall.Open(os.Args[0], 0700, 0)
-				if err != nil {
-					log.Fatal(err)
-				}
-				log.Printf("[%s] sending message %s, fd attached", processname, message)
-				w <- ipcmsg.Message(42, []byte(message), fd)
-			}
-
-		case msg := <-r:
-			if msg.Hdr.HasFd != 0 {
-				log.Printf("[%s] [uuid=%s] [fd=%d] data: %s\n", processname, msg.Hdr.Id, msg.Fd, string(msg.Data))
-			} else {
-				log.Printf("[%s] [uuid=%s] data: %s\n", processname, msg.Hdr.Id, string(msg.Data))
-			}
-			if msg.Fd != -1 {
-				syscall.Close(msg.Fd)
-			}
-		}
-	}
-}
-
 // parent process main routine, forks a child then sets up an ipcmsg
 // Channel on the socketpair, returning read and write channels. The
 // channels can be used to emit messages to the other process.
 //
+func parentDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
+}
+
 func parent() {
 	pid, fd := fork_child()
-	child_r, child_w := ipcmsg.Channel(pid, fd)
-	dispatcher("parent", child_r, child_w)
+	channel := ipcmsg.NewChannel(pid, fd)
+	channel.Handler(42, parentDispatcher)
+	go channel.Dispatch()
+
+	for {
+		channel.Write(42, []byte("PING"), -1)
+		time.Sleep(1 * time.Second)
+	}
 }
 
 // child process main routine, sets up an ipcmsg Channel on fd 3,
 // returning read and write channels to communicate with the other
 // process
 //
+func childDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
+	channel.Reply(msg, []byte("PONG"), -1)
+}
+
 func child() {
-	parent_r, parent_w := ipcmsg.Channel(os.Getppid(), 3)
-	dispatcher("child", parent_r, parent_w)
+	channel := ipcmsg.NewChannel(os.Getppid(), 3)
+	channel.Handler(42, childDispatcher)
+	channel.Dispatch()
 }

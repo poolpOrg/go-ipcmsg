@@ -19,12 +19,19 @@ package ipcmsg
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"log"
 	"os"
 	"syscall"
 
 	"github.com/google/uuid"
 )
+
+type Channel struct {
+	w        chan IPCMessage
+	r        chan IPCMessage
+	handlers map[IPCMsgType]func(*Channel, IPCMessage)
+}
 
 const IPCMSG_HEADER_SIZE = 31
 
@@ -45,15 +52,17 @@ type IPCMessage struct {
 	Data []byte
 }
 
-func Channel(peerid int, fd int) (chan IPCMessage, chan IPCMessage) {
+func NewChannel(peerid int, fd int) *Channel {
+	channel := &Channel{}
 	pid := os.Getpid()
 
-	w := make(chan IPCMessage)
-	r := make(chan IPCMessage)
+	channel.handlers = make(map[IPCMsgType]func(*Channel, IPCMessage))
+	channel.w = make(chan IPCMessage)
+	channel.r = make(chan IPCMessage)
 
 	// read message from write channel and send to peer fd
 	go func() {
-		for msg := range w {
+		for msg := range channel.w {
 			msg.Hdr.Peerid = uint32(peerid)
 			msg.Hdr.Pid = uint32(pid)
 
@@ -180,7 +189,7 @@ func Channel(peerid int, fd int) (chan IPCMessage, chan IPCMessage) {
 				buf = buf[IPCMSG_HEADER_SIZE+int(msg.Hdr.Size):]
 
 				// message is ready for caller
-				r <- msg
+				channel.r <- msg
 
 				// input buffer is empty, go back to read loop
 				if len(buf) == 0 {
@@ -195,37 +204,76 @@ func Channel(peerid int, fd int) (chan IPCMessage, chan IPCMessage) {
 		}
 	}()
 
-	return r, w
+	return channel
 }
 
-func Message(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
+func (channel *Channel) Dispatch() {
+	for msg := range channel.Read() {
+		handler, exists := channel.handlers[msg.Hdr.Type]
+		if !exists {
+			panic("RECEIVED UNEXPECTED MESSAGE")
+		}
+
+		handler(channel, msg)
+
+		if msg.Fd != -1 {
+			syscall.Close(msg.Fd)
+		}
+	}
+}
+
+func (channel *Channel) Handler(msgtype IPCMsgType, handler func(*Channel, IPCMessage)) {
+	channel.handlers[msgtype] = handler
+}
+
+func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 	msg := IPCMessage{}
 	msg.Hdr = IPCMsgHdr{}
 	msg.Hdr.Id, _ = uuid.NewRandom()
 	msg.Hdr.Type = msgtype
-	msg.Hdr.Size = uint16(len(data))
+	msg.Hdr.Size = uint16(len(data.([]byte)))
 	if fd == -1 {
 		msg.Hdr.HasFd = 0
 	} else {
 		msg.Hdr.HasFd = 1
 	}
-	msg.Data = data
+	msg.Data = data.([]byte)
 	msg.Fd = fd
+
 	return msg
 }
 
-func Reply(msg IPCMessage, data []byte, fd int) IPCMessage {
+func createReply(msg IPCMessage, data interface{}, fd int) IPCMessage {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		log.Fatal(err)
+	}
+
 	reply := IPCMessage{}
 	reply.Hdr = IPCMsgHdr{}
 	reply.Hdr.Id = msg.Hdr.Id
 	reply.Hdr.Type = msg.Hdr.Type
-	reply.Hdr.Size = uint16(len(data))
+	reply.Hdr.Size = uint16(len(data.([]byte)))
 	if fd == -1 {
 		reply.Hdr.HasFd = 0
 	} else {
 		reply.Hdr.HasFd = 1
 	}
-	reply.Data = data
+	reply.Data = data.([]byte)
 	reply.Fd = fd
+
 	return reply
+}
+
+func (channel *Channel) Read() chan IPCMessage {
+	return channel.r
+}
+
+func (channel *Channel) Write(msgtype IPCMsgType, data interface{}, fd int) {
+	channel.w <- createMessage(msgtype, data, fd)
+}
+
+func (channel *Channel) Reply(msg IPCMessage, data interface{}, fd int) {
+	channel.w <- createReply(msg, data, fd)
 }
