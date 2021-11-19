@@ -1,4 +1,4 @@
-# ipcmsg
+# go-ipcmsg
 
 **WIP:**
 This is work in progress, do not use for anything serious.
