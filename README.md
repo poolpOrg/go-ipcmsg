@@ -3,7 +3,7 @@
 **WIP:**
 This is work in progress, do not use for anything serious.
 
-The `ipcmsg` package provides a simple mechanism for communication between
+The `go-ipcmsg` package provides a simple mechanism for communication between
 local processes using sockets.
 Each transmitted message is guaranteed to be presented to the receiving program whole.
 They are commonly used in privilege separated processes,
