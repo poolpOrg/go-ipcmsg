@@ -227,5 +227,5 @@ func Reply(msg IPCMessage, data []byte, fd int) IPCMessage {
 	}
 	reply.Data = data
 	reply.Fd = fd
-	return msg
+	return reply
 }
