@@ -86,8 +86,8 @@ func fork_child() (int, int) {
 }
 
 const (
-	IPCMSG_PING  ipcmsg.IPCMsgType = iota
-	IPCMSG_HELLO ipcmsg.IPCMsgType = iota
+	IPCMSG_PING   ipcmsg.IPCMsgType = iota
+	IPCMSG_FDPASS ipcmsg.IPCMsgType = iota
 )
 
 // parent process main routine, forks a child then sets up an ipcmsg
@@ -97,7 +97,7 @@ func parentDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
 }
 
-func parentDispatcherHELLO(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+func parentDispatcherFDPASS(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
 }
 
@@ -105,14 +105,15 @@ func parent() {
 	pid, fd := fork_child()
 	channel := ipcmsg.NewChannel(pid, fd)
 	channel.Handler(IPCMSG_PING, parentDispatcherPING)
-	channel.Handler(IPCMSG_HELLO, parentDispatcherHELLO)
+	channel.Handler(IPCMSG_FDPASS, parentDispatcherFDPASS)
 	go channel.Dispatch()
 
 	for {
 		channel.Write(IPCMSG_PING, []byte("PING"), -1)
 		time.Sleep(1 * time.Second)
 
-		channel.Write(IPCMSG_HELLO, []byte("HELLO"), -1)
+		fd, _ = syscall.Open(os.Args[0], 0, 0)
+		channel.Write(IPCMSG_FDPASS, []byte("HELLO"), fd)
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -125,14 +126,17 @@ func childDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	channel.Reply(msg, []byte("PONG"), -1)
 }
 
-func childDispatcherHELLO(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
-	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
+func childDispatcherFDPASS(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+	fmt.Printf("CHILD: GOT %s FROM PARENT [fd=%d]\n", msg.Data, msg.Fd)
+	if msg.Fd != -1 {
+		syscall.Close(msg.Fd)
+	}
 	channel.Reply(msg, []byte("HELLO"), -1)
 }
 
 func child() {
 	channel := ipcmsg.NewChannel(os.Getppid(), 3)
 	channel.Handler(IPCMSG_PING, childDispatcherPING)
-	channel.Handler(IPCMSG_HELLO, childDispatcherHELLO)
+	channel.Handler(IPCMSG_FDPASS, childDispatcherFDPASS)
 	channel.Dispatch()
 }
