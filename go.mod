@@ -1,4 +1,4 @@
-module github.com/poolpOrg/ipcmsg
+module github.com/poolpOrg/go-ipcmsg
 
 go 1.16
 

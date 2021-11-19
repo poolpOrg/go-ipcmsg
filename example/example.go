@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/poolpOrg/ipcmsg"
+	"github.com/poolpOrg/go-ipcmsg"
 )
 
 // upon execution, call parent() which will setup a socketpair
