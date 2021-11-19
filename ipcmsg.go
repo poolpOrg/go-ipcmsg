@@ -22,13 +22,16 @@ import (
 	"log"
 	"os"
 	"syscall"
+
+	"github.com/google/uuid"
 )
 
-const IPCMSG_HEADER_SIZE = 15
+const IPCMSG_HEADER_SIZE = 31
 
 type IPCMsgType uint32
 
 type IPCMsgHdr struct {
+	Id     uuid.UUID
 	Type   IPCMsgType
 	Size   uint16
 	HasFd  uint8
@@ -195,13 +198,10 @@ func Channel(peerid int, fd int) (chan IPCMessage, chan IPCMessage) {
 	return r, w
 }
 
-func Message(msgtype IPCMsgType, data []byte) IPCMessage {
-	return MessageWithFd(msgtype, data, -1)
-}
-
-func MessageWithFd(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
+func Message(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 	msg := IPCMessage{}
 	msg.Hdr = IPCMsgHdr{}
+	msg.Hdr.Id, _ = uuid.NewRandom()
 	msg.Hdr.Type = msgtype
 	msg.Hdr.Size = uint16(len(data))
 	if fd == -1 {
@@ -211,5 +211,21 @@ func MessageWithFd(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 	}
 	msg.Data = data
 	msg.Fd = fd
+	return msg
+}
+
+func Reply(msg IPCMessage, data []byte, fd int) IPCMessage {
+	reply := IPCMessage{}
+	reply.Hdr = IPCMsgHdr{}
+	reply.Hdr.Id = msg.Hdr.Id
+	reply.Hdr.Type = msg.Hdr.Type
+	reply.Hdr.Size = uint16(len(data))
+	if fd == -1 {
+		reply.Hdr.HasFd = 0
+	} else {
+		reply.Hdr.HasFd = 1
+	}
+	reply.Data = data
+	reply.Fd = fd
 	return msg
 }

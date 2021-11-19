@@ -103,21 +103,21 @@ func dispatcher(processname string, r chan ipcmsg.IPCMessage, w chan ipcmsg.IPCM
 			message := messages[rand.Intn(len(messages))]
 			if rand.Int()%5 != 0 {
 				log.Printf("[%s] sending message %s", processname, message)
-				w <- ipcmsg.Message(42, []byte(message))
+				w <- ipcmsg.Message(42, []byte(message), -1)
 			} else {
 				fd, err := syscall.Open(os.Args[0], 0700, 0)
 				if err != nil {
 					log.Fatal(err)
 				}
 				log.Printf("[%s] sending message %s, fd attached", processname, message)
-				w <- ipcmsg.MessageWithFd(42, []byte(message), fd)
+				w <- ipcmsg.Message(42, []byte(message), fd)
 			}
 
 		case msg := <-r:
 			if msg.Hdr.HasFd != 0 {
-				log.Printf("[%s] [fd=%d] data: %s\n", processname, msg.Fd, string(msg.Data))
+				log.Printf("[%s] [uuid=%s] [fd=%d] data: %s\n", processname, msg.Hdr.Id, msg.Fd, string(msg.Data))
 			} else {
-				log.Printf("[%s] data: %s\n", processname, string(msg.Data))
+				log.Printf("[%s] [uuid=%s] data: %s\n", processname, msg.Hdr.Id, string(msg.Data))
 			}
 			if msg.Fd != -1 {
 				syscall.Close(msg.Fd)
