@@ -86,8 +86,7 @@ func fork_child() (int, int) {
 }
 
 // parent process main routine, forks a child then sets up an ipcmsg
-// Channel on the socketpair, returning read and write channels. The
-// channels can be used to emit messages to the other process.
+// Channel on the socketpair, associating a handler for msg type 42.
 //
 func parentDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
@@ -106,8 +105,7 @@ func parent() {
 }
 
 // child process main routine, sets up an ipcmsg Channel on fd 3,
-// returning read and write channels to communicate with the other
-// process
+// associating a handler for msg type 42.
 //
 func childDispatcher(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
 	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
