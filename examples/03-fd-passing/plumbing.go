@@ -17,14 +17,16 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"syscall"
-	"time"
 
 	"github.com/poolpOrg/go-ipcmsg"
+)
+
+const (
+	IPCMSG_OPENFILE ipcmsg.IPCMsgType = iota
 )
 
 // upon execution, call parent() which will setup a socketpair
@@ -83,60 +85,4 @@ func fork_child() (int, int) {
 	}
 
 	return pid, sp[1]
-}
-
-const (
-	IPCMSG_PING   ipcmsg.IPCMsgType = iota
-	IPCMSG_FDPASS ipcmsg.IPCMsgType = iota
-)
-
-// parent process main routine, forks a child then sets up an ipcmsg
-// Channel on the socketpair, associating a handler for msg type 42.
-//
-func parentDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
-	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
-}
-
-func parentDispatcherFDPASS(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
-	fmt.Printf("PARENT: GOT %s FROM CHILD\n", msg.Data)
-}
-
-func parent() {
-	pid, fd := fork_child()
-	channel := ipcmsg.NewChannel(pid, fd)
-	channel.Handler(IPCMSG_PING, parentDispatcherPING)
-	channel.Handler(IPCMSG_FDPASS, parentDispatcherFDPASS)
-	go channel.Dispatch()
-
-	for {
-		channel.Write(IPCMSG_PING, []byte("PING"), -1)
-		time.Sleep(1 * time.Second)
-
-		fd, _ = syscall.Open(os.Args[0], 0, 0)
-		channel.Write(IPCMSG_FDPASS, []byte("HELLO"), fd)
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// child process main routine, sets up an ipcmsg Channel on fd 3,
-// associating a handler for msg type 42.
-//
-func childDispatcherPING(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
-	fmt.Printf("CHILD: GOT %s FROM PARENT\n", msg.Data)
-	channel.Reply(msg, []byte("PONG"), -1)
-}
-
-func childDispatcherFDPASS(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
-	fmt.Printf("CHILD: GOT %s FROM PARENT [fd=%d]\n", msg.Data, msg.Fd)
-	if msg.Fd != -1 {
-		syscall.Close(msg.Fd)
-	}
-	channel.Reply(msg, []byte("HELLO"), -1)
-}
-
-func child() {
-	channel := ipcmsg.NewChannel(os.Getppid(), 3)
-	channel.Handler(IPCMSG_PING, childDispatcherPING)
-	channel.Handler(IPCMSG_FDPASS, childDispatcherFDPASS)
-	channel.Dispatch()
 }

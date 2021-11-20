@@ -123,6 +123,10 @@ func NewChannel(peerid int, fd int) *Channel {
 			if err != nil {
 				log.Fatal(err)
 			}
+			if n == 0 {
+				break
+			}
+
 			buf = buf[:n]
 
 			// sometimes we have an FD, sometimes we don't
@@ -214,24 +218,29 @@ func NewChannel(peerid int, fd int) *Channel {
 	return channel
 }
 
-func (channel *Channel) Dispatch() {
-	for msg := range channel.read() {
-		channel.muQueries.Lock()
-		callbackChannel, exists := channel.queries[msg.Hdr.Id]
-		delete(channel.queries, msg.Hdr.Id)
-		channel.muQueries.Unlock()
-		if exists {
-			callbackChannel <- msg
-			continue
-		}
+func (channel *Channel) Dispatch() <-chan bool {
+	done := make(chan bool)
+	go func() {
+		for msg := range channel.read() {
+			channel.muQueries.Lock()
+			callbackChannel, exists := channel.queries[msg.Hdr.Id]
+			delete(channel.queries, msg.Hdr.Id)
+			channel.muQueries.Unlock()
+			if exists {
+				callbackChannel <- msg
+				continue
+			}
 
-		handler, exists := channel.handlers[msg.Hdr.Type]
-		if !exists {
-			panic("RECEIVED UNEXPECTED MESSAGE")
-		}
+			handler, exists := channel.handlers[msg.Hdr.Type]
+			if !exists {
+				panic("RECEIVED UNEXPECTED MESSAGE")
+			}
 
-		handler(channel, msg)
-	}
+			handler(channel, msg)
+		}
+		done <- true
+	}()
+	return done
 }
 
 func (channel *Channel) Handler(msgtype IPCMsgType, handler func(*Channel, IPCMessage)) {
