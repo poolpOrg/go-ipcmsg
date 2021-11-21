@@ -19,7 +19,6 @@ package ipcmsg
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/gob"
 	"log"
 	"os"
 	"sync"
@@ -221,7 +220,7 @@ func NewChannel(peerid int, fd int) *Channel {
 func (channel *Channel) Dispatch() <-chan bool {
 	done := make(chan bool)
 	go func() {
-		for msg := range channel.read() {
+		for msg := range channel.r {
 			channel.muQueries.Lock()
 			callbackChannel, exists := channel.queries[msg.Hdr.Id]
 			delete(channel.queries, msg.Hdr.Id)
@@ -267,30 +266,9 @@ func createMessage(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 }
 
 func createReply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) IPCMessage {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(data); err != nil {
-		log.Fatal(err)
-	}
-
-	reply := IPCMessage{}
-	reply.Hdr = IPCMsgHdr{}
+	reply := createMessage(msgtype, data, fd)
 	reply.Hdr.Id = msg.Hdr.Id
-	reply.Hdr.Type = msgtype
-	reply.Hdr.Size = uint16(len(data))
-	if fd == -1 {
-		reply.Hdr.HasFd = 0
-	} else {
-		reply.Hdr.HasFd = 1
-	}
-	reply.Data = data
-	reply.Fd = fd
-
 	return reply
-}
-
-func (channel *Channel) read() chan IPCMessage {
-	return channel.r
 }
 
 func (channel *Channel) Message(msgtype IPCMsgType, data []byte, fd int) {
