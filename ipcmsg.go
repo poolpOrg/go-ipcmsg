@@ -275,7 +275,7 @@ func (channel *Channel) Message(msgtype IPCMsgType, data []byte, fd int) {
 	channel.w <- createMessage(msgtype, data, fd)
 }
 
-func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) ([]byte, int) {
+func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) (IPCMsgType, []byte, int) {
 	wait := make(chan IPCMessage)
 
 	msg := createMessage(msgtype, data, fd)
@@ -285,7 +285,7 @@ func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) ([]byte, 
 
 	channel.w <- msg
 	msg = <-wait
-	return msg.Data, msg.Fd
+	return msg.Hdr.Type, msg.Data, msg.Fd
 }
 
 func (channel *Channel) Reply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) {
