@@ -24,7 +24,7 @@ import (
 
 func parent() {
 	pid, fd := fork_child()
-	channel := ipcmsg.NewChannel(pid, fd)
+	channel := ipcmsg.NewChannel("parent<->child", pid, fd)
 	channel.Dispatch()
 
 	_, response, _ := channel.Query(IPCMSG_PING, []byte("PING ?"), -1)

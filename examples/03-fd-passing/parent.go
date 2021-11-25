@@ -25,7 +25,7 @@ import (
 
 func parent() {
 	pid, fd := fork_child()
-	channel := ipcmsg.NewChannel(pid, fd)
+	channel := ipcmsg.NewChannel("parent<->child", pid, fd)
 	channel.Handler(IPCMSG_OPENFILE, handleOPENFILE)
 	<-channel.Dispatch()
 }

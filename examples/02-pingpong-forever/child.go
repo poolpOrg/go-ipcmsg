@@ -24,7 +24,7 @@ import (
 )
 
 func child() {
-	channel := ipcmsg.NewChannel(os.Getppid(), 3)
+	channel := ipcmsg.NewChannel("child<->parent", os.Getppid(), 3)
 	channel.Handler(IPCMSG_PING, handlePING)
 	<-channel.Dispatch()
 }

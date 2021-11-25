@@ -28,6 +28,8 @@ import (
 )
 
 type Channel struct {
+	name string
+
 	w chan IPCMessage
 	r chan IPCMessage
 
@@ -57,10 +59,11 @@ type IPCMessage struct {
 	Data []byte
 }
 
-func NewChannel(peerid int, fd int) *Channel {
+func NewChannel(name string, peerid int, fd int) *Channel {
 	channel := &Channel{}
 	pid := os.Getpid()
 
+	channel.name = name
 	channel.queries = make(map[uuid.UUID]chan IPCMessage)
 	channel.handlers = make(map[IPCMsgType]func(*Channel, IPCMessage))
 	channel.w = make(chan IPCMessage)
@@ -232,7 +235,7 @@ func (channel *Channel) Dispatch() <-chan bool {
 
 			handler, exists := channel.handlers[msg.Hdr.Type]
 			if !exists {
-				panic("RECEIVED UNEXPECTED MESSAGE")
+				log.Fatalf("channel %s: received unexpected message type %d", channel.name, msg.Hdr.Type)
 			}
 
 			handler(channel, msg)

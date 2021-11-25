@@ -25,7 +25,7 @@ import (
 )
 
 func child() {
-	channel := ipcmsg.NewChannel(os.Getppid(), 3)
+	channel := ipcmsg.NewChannel("child<->parent", os.Getppid(), 3)
 	channel.Dispatch()
 
 	msgtype, response, fd := channel.Query(IPCMSG_OPENFILE, []byte("/etc/passwd"), -1)
