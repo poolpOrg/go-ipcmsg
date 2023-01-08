@@ -294,3 +294,11 @@ func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) (IPCMsgTy
 func (channel *Channel) Reply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) {
 	channel.w <- createReply(msg, msgtype, data, fd)
 }
+
+func (channel *Channel) ChannelIn() <-chan IPCMessage {
+	return channel.r
+}
+
+func (channel *Channel) ChannelOut() chan<- IPCMessage {
+	return channel.w
+}
