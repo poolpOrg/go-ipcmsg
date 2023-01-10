@@ -25,16 +25,14 @@ import (
 	"github.com/poolpOrg/go-ipcmsg"
 )
 
-const (
-	IPCMSG_OPENFILE ipcmsg.IPCMsgType = iota
+var (
+	IPCMSG_OPENFILE ipcmsg.IPCMsgType = ipcmsg.NewIPCMsgType("")
 )
 
 // upon execution, call parent() which will setup a socketpair
 // then fork a child to reexec the program with the REEXEC env
 // var set to CHILD, making it execute child().
 func main() {
-	ipcmsg.Register(IPCMSG_OPENFILE, "")
-
 	reexec := os.Getenv("REEXEC")
 	switch reexec {
 	case "":

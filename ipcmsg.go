@@ -64,13 +64,11 @@ type IPCMessage struct {
 
 var msgTypes = make(map[IPCMsgType]string)
 
-func Register(msgType IPCMsgType, msgObject interface{}) {
-	if _, exists := msgTypes[msgType]; !exists {
-		msgTypes[msgType] = reflect.TypeOf(msgObject).Name()
-		gob.Register(msgObject)
-	} else {
-		panic("registering same type twice")
-	}
+func NewIPCMsgType(msgObject interface{}) IPCMsgType {
+	msgType := IPCMsgType(len(msgTypes))
+	msgTypes[msgType] = reflect.TypeOf(msgObject).Name()
+	gob.Register(msgObject)
+	return msgType
 }
 
 func NewChannel(name string, peerid int, fd int) *Channel {
@@ -267,6 +265,14 @@ func (channel *Channel) Handler(msgtype IPCMsgType, handler func(IPCMessage)) {
 }
 
 func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
+	if reflecType, exists := msgTypes[msgtype]; !exists {
+		panic("unregistered IPC message type")
+	} else {
+		if reflect.TypeOf(data).Name() != reflecType {
+			panic("creating IPC message with invalid data type")
+		}
+	}
+
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err := enc.Encode(data)
@@ -302,15 +308,6 @@ func (channel *Channel) Message(msgtype IPCMsgType, data interface{}, fd int) {
 
 func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 	wait := make(chan IPCMessage)
-
-	if reflecType, exists := msgTypes[msgtype]; !exists {
-		panic("unregistered IPC message type")
-	} else {
-		if reflect.TypeOf(data).Name() != reflecType {
-			panic("creating IPC message with invalid data type")
-		}
-	}
-
 	msg := createMessage(msgtype, data, fd)
 	channel.muQueries.Lock()
 	channel.queries[msg.hdr.Id] = wait
