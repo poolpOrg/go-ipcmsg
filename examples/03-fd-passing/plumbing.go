@@ -32,8 +32,9 @@ const (
 // upon execution, call parent() which will setup a socketpair
 // then fork a child to reexec the program with the REEXEC env
 // var set to CHILD, making it execute child().
-//
 func main() {
+	ipcmsg.Register(IPCMSG_OPENFILE, "")
+
 	reexec := os.Getenv("REEXEC")
 	switch reexec {
 	case "":
@@ -46,7 +47,6 @@ func main() {
 // fork_child() sets up the socketpair to be shared by parent and child,
 // passing one end as fd 3 to child & returning the other end to parent.
 // the child reexecutes the program with env var REEXEC.
-//
 func fork_child() (int, int) {
 	binary, err := exec.LookPath(os.Args[0])
 	if err != nil {
