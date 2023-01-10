@@ -31,12 +31,14 @@ func parent() {
 }
 
 func handleOPENFILE(msg ipcmsg.IPCMessage) {
-	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", string(msg.Data()))
+	var data string
+	msg.Unmarshal(&data)
+	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", data)
 
-	fp, err := os.Open(string(msg.Data()))
+	fp, err := os.Open(data)
 	if err != nil {
-		msg.Reply(IPCMSG_OPENFILE, []byte("NOPE !"), -1)
+		msg.Reply(IPCMSG_OPENFILE, "NOPE !", -1)
 	} else {
-		msg.Reply(IPCMSG_OPENFILE, []byte("OK !"), int(fp.Fd()))
+		msg.Reply(IPCMSG_OPENFILE, "OK !", int(fp.Fd()))
 	}
 }

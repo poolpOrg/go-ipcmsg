@@ -19,6 +19,7 @@ package ipcmsg
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"log"
 	"os"
 	"sync"
@@ -58,6 +59,17 @@ type IPCMessage struct {
 	hdr     ipcMsgHdr
 	fd      int
 	data    []byte
+}
+
+var msgTypes = make(map[IPCMsgType]interface{})
+
+func Register(msgType IPCMsgType, msgObject interface{}) {
+	if _, exists := msgTypes[msgType]; !exists {
+		msgTypes[msgType] = msgObject
+		gob.Register(msgObject)
+	} else {
+		panic("registering same type twice")
+	}
 }
 
 func NewChannel(name string, peerid int, fd int) *Channel {
@@ -253,34 +265,41 @@ func (channel *Channel) Handler(msgtype IPCMsgType, handler func(IPCMessage)) {
 	channel.handlers[msgtype] = handler
 }
 
-func createMessage(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
+func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(data)
+	if err != nil {
+		panic(err)
+	}
+
 	msg := IPCMessage{}
 	msg.hdr = ipcMsgHdr{}
 	msg.hdr.Id, _ = uuid.NewRandom()
 	msg.hdr.Type = msgtype
-	msg.hdr.Size = uint16(len(data))
+	msg.hdr.Size = uint16(len(buf.Bytes()))
 	if fd == -1 {
 		msg.hdr.HasFd = 0
 	} else {
 		msg.hdr.HasFd = 1
 	}
-	msg.data = data
+	msg.data = buf.Bytes()
 	msg.fd = fd
 
 	return msg
 }
 
-func createReply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) IPCMessage {
+func createReply(msg IPCMessage, msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 	reply := createMessage(msgtype, data, fd)
 	reply.hdr.Id = msg.hdr.Id
 	return reply
 }
 
-func (channel *Channel) Message(msgtype IPCMsgType, data []byte, fd int) {
+func (channel *Channel) Message(msgtype IPCMsgType, data interface{}, fd int) {
 	channel.w <- createMessage(msgtype, data, fd)
 }
 
-func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
+func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 	wait := make(chan IPCMessage)
 
 	msg := createMessage(msgtype, data, fd)
@@ -304,8 +323,12 @@ func (msg *IPCMessage) Type() IPCMsgType {
 	return msg.hdr.Type
 }
 
-func (msg *IPCMessage) Data() []byte {
-	return msg.data
+func (msg *IPCMessage) Unmarshal(v interface{}) {
+	dec := gob.NewDecoder(bytes.NewBuffer(msg.data))
+	err := dec.Decode(v)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (msg *IPCMessage) HasFd() bool {
@@ -316,6 +339,6 @@ func (msg *IPCMessage) Fd() int {
 	return msg.fd
 }
 
-func (msg *IPCMessage) Reply(msgtype IPCMsgType, data []byte, fd int) {
+func (msg *IPCMessage) Reply(msgtype IPCMsgType, data interface{}, fd int) {
 	msg.channel.w <- createReply(*msg, msgtype, data, fd)
 }

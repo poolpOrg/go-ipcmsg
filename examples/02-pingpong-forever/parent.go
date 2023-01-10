@@ -26,11 +26,14 @@ func parent() {
 	pid, fd := fork_child()
 	channel := ipcmsg.NewChannel("parent<->child", pid, fd)
 	channel.Handler(IPCMSG_PONG, handlePONG)
-	channel.Message(IPCMSG_PING, []byte("PING ?"), -1)
+	channel.Message(IPCMSG_PING, "PING ?", -1)
 	<-channel.Dispatch()
 }
 
 func handlePONG(msg ipcmsg.IPCMessage) {
-	fmt.Printf("parent: got PONG from child: %s\n", string(msg.Data()))
-	msg.Reply(IPCMSG_PING, []byte("PING !"), -1)
+	var data string
+	msg.Unmarshal(&data)
+
+	fmt.Printf("parent: got PONG from child: %s\n", data)
+	msg.Reply(IPCMSG_PING, "PING !", -1)
 }
