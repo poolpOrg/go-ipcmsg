@@ -30,13 +30,13 @@ func parent() {
 	<-channel.Dispatch()
 }
 
-func handleOPENFILE(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+func handleOPENFILE(msg ipcmsg.IPCMessage) {
 	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", string(msg.Data))
 
 	fp, err := os.Open(string(msg.Data))
 	if err != nil {
-		channel.Reply(msg, IPCMSG_OPENFILE, []byte("NOPE !"), -1)
+		msg.Reply(IPCMSG_OPENFILE, []byte("NOPE !"), -1)
 	} else {
-		channel.Reply(msg, IPCMSG_OPENFILE, []byte("OK !"), int(fp.Fd()))
+		msg.Reply(IPCMSG_OPENFILE, []byte("OK !"), int(fp.Fd()))
 	}
 }

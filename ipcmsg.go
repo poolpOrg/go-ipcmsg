@@ -37,7 +37,7 @@ type Channel struct {
 	queries   map[uuid.UUID]chan IPCMessage
 
 	muHandlers sync.Mutex
-	handlers   map[IPCMsgType]func(*Channel, IPCMessage)
+	handlers   map[IPCMsgType]func(IPCMessage)
 }
 
 const IPCMSG_HEADER_SIZE = 31
@@ -54,9 +54,10 @@ type IPCMsgHdr struct {
 }
 
 type IPCMessage struct {
-	Hdr  IPCMsgHdr
-	Fd   int
-	Data []byte
+	channel *Channel
+	Hdr     IPCMsgHdr
+	Fd      int
+	Data    []byte
 }
 
 func NewChannel(name string, peerid int, fd int) *Channel {
@@ -65,7 +66,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 
 	channel.name = name
 	channel.queries = make(map[uuid.UUID]chan IPCMessage)
-	channel.handlers = make(map[IPCMsgType]func(*Channel, IPCMessage))
+	channel.handlers = make(map[IPCMsgType]func(IPCMessage))
 	channel.w = make(chan IPCMessage)
 	channel.r = make(chan IPCMessage)
 
@@ -185,6 +186,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				// and if a FD is supposed to be attached, use the one
 				// we extracted from control message
 				msg := IPCMessage{}
+				msg.channel = channel
 				msg.Hdr = hdr
 				msg.Hdr.Peerid = uint32(peerid)
 				msg.Hdr.Pid = uint32(pid)
@@ -238,14 +240,14 @@ func (channel *Channel) Dispatch() <-chan bool {
 				log.Fatalf("channel %s: received unexpected message type %d", channel.name, msg.Hdr.Type)
 			}
 
-			handler(channel, msg)
+			handler(msg)
 		}
 		done <- true
 	}()
 	return done
 }
 
-func (channel *Channel) Handler(msgtype IPCMsgType, handler func(*Channel, IPCMessage)) {
+func (channel *Channel) Handler(msgtype IPCMsgType, handler func(IPCMessage)) {
 	channel.muHandlers.Lock()
 	defer channel.muHandlers.Unlock()
 	channel.handlers[msgtype] = handler
@@ -291,14 +293,14 @@ func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) (IPCMsgTy
 	return msg.Hdr.Type, msg.Data, msg.Fd
 }
 
-func (channel *Channel) Reply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) {
-	channel.w <- createReply(msg, msgtype, data, fd)
-}
-
 func (channel *Channel) ChannelIn() <-chan IPCMessage {
 	return channel.r
 }
 
 func (channel *Channel) ChannelOut() chan<- IPCMessage {
 	return channel.w
+}
+
+func (msg *IPCMessage) Reply(msgtype IPCMsgType, data []byte, fd int) {
+	msg.channel.w <- createReply(*msg, msgtype, data, fd)
 }

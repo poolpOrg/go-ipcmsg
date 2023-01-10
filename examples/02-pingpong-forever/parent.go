@@ -30,7 +30,7 @@ func parent() {
 	<-channel.Dispatch()
 }
 
-func handlePONG(channel *ipcmsg.Channel, msg ipcmsg.IPCMessage) {
+func handlePONG(msg ipcmsg.IPCMessage) {
 	fmt.Printf("parent: got PONG from child: %s\n", string(msg.Data))
-	channel.Reply(msg, IPCMSG_PING, []byte("PING !"), -1)
+	msg.Reply(IPCMSG_PING, []byte("PING !"), -1)
 }
