@@ -329,13 +329,13 @@ func (msg *IPCMessage) Type() IPCMsgType {
 	return msg.hdr.Type
 }
 
-func (msg *IPCMessage) Unmarshal(v interface{}) error {
+func (msg *IPCMessage) TryUnmarshal(v interface{}) error {
 	dec := gob.NewDecoder(bytes.NewBuffer(msg.data))
 	return dec.Decode(v)
 }
 
-func (msg *IPCMessage) MustUnmarshal(v interface{}) {
-	err := msg.Unmarshal(v)
+func (msg *IPCMessage) Unmarshal(v interface{}) {
+	err := msg.TryUnmarshal(v)
 	if err != nil {
 		panic(err)
 	}
