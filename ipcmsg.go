@@ -44,7 +44,7 @@ const IPCMSG_HEADER_SIZE = 31
 
 type IPCMsgType uint32
 
-type IPCMsgHdr struct {
+type ipcMsgHdr struct {
 	Id     uuid.UUID
 	Type   IPCMsgType
 	Size   uint16
@@ -55,9 +55,9 @@ type IPCMsgHdr struct {
 
 type IPCMessage struct {
 	channel *Channel
-	Hdr     IPCMsgHdr
-	Fd      int
-	Data    []byte
+	hdr     ipcMsgHdr
+	fd      int
+	data    []byte
 }
 
 func NewChannel(name string, peerid int, fd int) *Channel {
@@ -73,21 +73,21 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 	// read message from write channel and send to peer fd
 	go func() {
 		for msg := range channel.w {
-			msg.Hdr.Peerid = uint32(peerid)
-			msg.Hdr.Pid = uint32(pid)
+			msg.hdr.Peerid = uint32(peerid)
+			msg.hdr.Pid = uint32(pid)
 
 			// pack msg header and msg data into output buf
 			obuf := make([]byte, 0)
 
 			var packed bytes.Buffer
-			if err := binary.Write(&packed, binary.BigEndian, &msg.Hdr); err != nil {
+			if err := binary.Write(&packed, binary.BigEndian, &msg.hdr); err != nil {
 				log.Fatal(err)
 			}
 			obuf = append(obuf, packed.Bytes()...)
-			obuf = append(obuf, msg.Data...)
+			obuf = append(obuf, msg.data...)
 
 			// if msg has no FD attached, send as is
-			if msg.Hdr.HasFd == 0 {
+			if msg.hdr.HasFd == 0 {
 				err := syscall.Sendmsg(fd, obuf, nil, nil, 0)
 				if err != nil {
 					log.Fatal(err)
@@ -97,13 +97,13 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			}
 
 			// an FD is attached, we need to craft a UnixRights control message
-			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights([]int{msg.Fd}...), nil, 0)
+			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights([]int{msg.fd}...), nil, 0)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			// close the attached FD
-			err = syscall.Close(msg.Fd)
+			err = syscall.Close(msg.fd)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -169,7 +169,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			for {
 				// first, decode a header
 				var hdr_bin bytes.Buffer
-				var hdr IPCMsgHdr
+				var hdr ipcMsgHdr
 				hdr_bin.Write(buf[:IPCMSG_HEADER_SIZE])
 				err = binary.Read(&hdr_bin, binary.BigEndian, &hdr)
 				if err != nil {
@@ -187,21 +187,21 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				// we extracted from control message
 				msg := IPCMessage{}
 				msg.channel = channel
-				msg.Hdr = hdr
-				msg.Hdr.Peerid = uint32(peerid)
-				msg.Hdr.Pid = uint32(pid)
-				msg.Data = buf[IPCMSG_HEADER_SIZE : IPCMSG_HEADER_SIZE+int(msg.Hdr.Size)]
-				msg.Fd = -1
-				if msg.Hdr.HasFd != 0 {
+				msg.hdr = hdr
+				msg.hdr.Peerid = uint32(peerid)
+				msg.hdr.Pid = uint32(pid)
+				msg.data = buf[IPCMSG_HEADER_SIZE : IPCMSG_HEADER_SIZE+int(msg.hdr.Size)]
+				msg.fd = -1
+				if msg.hdr.HasFd != 0 {
 					if pfd == -1 {
 						// FD exhaustion on receiving end most-likely
 					}
-					msg.Fd = pfd
+					msg.fd = pfd
 					pfd = -1
 				}
 
 				// discard consumed data from input buffer
-				buf = buf[IPCMSG_HEADER_SIZE+int(msg.Hdr.Size):]
+				buf = buf[IPCMSG_HEADER_SIZE+int(msg.hdr.Size):]
 
 				// message is ready for caller
 				channel.r <- msg
@@ -227,17 +227,17 @@ func (channel *Channel) Dispatch() <-chan bool {
 	go func() {
 		for msg := range channel.r {
 			channel.muQueries.Lock()
-			callbackChannel, exists := channel.queries[msg.Hdr.Id]
-			delete(channel.queries, msg.Hdr.Id)
+			callbackChannel, exists := channel.queries[msg.hdr.Id]
+			delete(channel.queries, msg.hdr.Id)
 			channel.muQueries.Unlock()
 			if exists {
 				callbackChannel <- msg
 				continue
 			}
 
-			handler, exists := channel.handlers[msg.Hdr.Type]
+			handler, exists := channel.handlers[msg.hdr.Type]
 			if !exists {
-				log.Fatalf("channel %s: received unexpected message type %d", channel.name, msg.Hdr.Type)
+				log.Fatalf("channel %s: received unexpected message type %d", channel.name, msg.hdr.Type)
 			}
 
 			handler(msg)
@@ -255,24 +255,24 @@ func (channel *Channel) Handler(msgtype IPCMsgType, handler func(IPCMessage)) {
 
 func createMessage(msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 	msg := IPCMessage{}
-	msg.Hdr = IPCMsgHdr{}
-	msg.Hdr.Id, _ = uuid.NewRandom()
-	msg.Hdr.Type = msgtype
-	msg.Hdr.Size = uint16(len(data))
+	msg.hdr = ipcMsgHdr{}
+	msg.hdr.Id, _ = uuid.NewRandom()
+	msg.hdr.Type = msgtype
+	msg.hdr.Size = uint16(len(data))
 	if fd == -1 {
-		msg.Hdr.HasFd = 0
+		msg.hdr.HasFd = 0
 	} else {
-		msg.Hdr.HasFd = 1
+		msg.hdr.HasFd = 1
 	}
-	msg.Data = data
-	msg.Fd = fd
+	msg.data = data
+	msg.fd = fd
 
 	return msg
 }
 
 func createReply(msg IPCMessage, msgtype IPCMsgType, data []byte, fd int) IPCMessage {
 	reply := createMessage(msgtype, data, fd)
-	reply.Hdr.Id = msg.Hdr.Id
+	reply.hdr.Id = msg.hdr.Id
 	return reply
 }
 
@@ -285,7 +285,7 @@ func (channel *Channel) Query(msgtype IPCMsgType, data []byte, fd int) IPCMessag
 
 	msg := createMessage(msgtype, data, fd)
 	channel.muQueries.Lock()
-	channel.queries[msg.Hdr.Id] = wait
+	channel.queries[msg.hdr.Id] = wait
 	channel.muQueries.Unlock()
 
 	channel.w <- msg
@@ -298,6 +298,22 @@ func (channel *Channel) ChannelIn() <-chan IPCMessage {
 
 func (channel *Channel) ChannelOut() chan<- IPCMessage {
 	return channel.w
+}
+
+func (msg *IPCMessage) Type() IPCMsgType {
+	return msg.hdr.Type
+}
+
+func (msg *IPCMessage) Data() []byte {
+	return msg.data
+}
+
+func (msg *IPCMessage) HasFd() bool {
+	return msg.hdr.HasFd == 1
+}
+
+func (msg *IPCMessage) Fd() int {
+	return msg.fd
 }
 
 func (msg *IPCMessage) Reply(msgtype IPCMsgType, data []byte, fd int) {

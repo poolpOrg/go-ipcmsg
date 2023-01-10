@@ -30,6 +30,6 @@ func child() {
 }
 
 func handlePING(msg ipcmsg.IPCMessage) {
-	fmt.Printf("child: got PING from parent: %s\n", string(msg.Data))
+	fmt.Printf("child: got PING from parent: %s\n", string(msg.Data()))
 	msg.Reply(IPCMSG_PONG, []byte("PONG !"), -1)
 }

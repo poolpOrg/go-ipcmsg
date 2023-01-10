@@ -28,5 +28,5 @@ func parent() {
 	channel.Dispatch()
 
 	response := channel.Query(IPCMSG_PING, []byte("PING ?"), -1)
-	fmt.Printf("parent: got response from child: %s\n", response.Data)
+	fmt.Printf("parent: got response from child: %s\n", response.Data())
 }

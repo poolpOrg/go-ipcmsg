@@ -31,9 +31,9 @@ func parent() {
 }
 
 func handleOPENFILE(msg ipcmsg.IPCMessage) {
-	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", string(msg.Data))
+	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", string(msg.Data()))
 
-	fp, err := os.Open(string(msg.Data))
+	fp, err := os.Open(string(msg.Data()))
 	if err != nil {
 		msg.Reply(IPCMSG_OPENFILE, []byte("NOPE !"), -1)
 	} else {
