@@ -27,6 +27,6 @@ func parent() {
 	channel := ipcmsg.NewChannel("parent<->child", pid, fd)
 	channel.Dispatch()
 
-	_, response, _ := channel.Query(IPCMSG_PING, []byte("PING ?"), -1)
-	fmt.Printf("parent: got response from child: %s\n", response)
+	response := channel.Query(IPCMSG_PING, []byte("PING ?"), -1)
+	fmt.Printf("parent: got response from child: %s\n", response.Data)
 }

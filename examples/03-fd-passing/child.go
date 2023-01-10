@@ -28,9 +28,9 @@ func child() {
 	channel := ipcmsg.NewChannel("child<->parent", os.Getppid(), 3)
 	channel.Dispatch()
 
-	msgtype, response, fd := channel.Query(IPCMSG_OPENFILE, []byte("/etc/passwd"), -1)
-	fmt.Println("child received: ", msgtype, string(response), fd)
-	if fd != -1 {
-		syscall.Close(fd)
+	response := channel.Query(IPCMSG_OPENFILE, []byte("/etc/passwd"), -1)
+	fmt.Println("child received: ", response.Hdr.Type, string(response.Data), response.Fd)
+	if response.Fd != -1 {
+		syscall.Close(response.Fd)
 	}
 }
