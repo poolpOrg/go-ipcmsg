@@ -13,4 +13,4 @@ It is inspired by OpenBSD's `imsg(3)` API,
 however it is not intended to be wire compatible and uses a different approach making use of Golang's channels.
 
 For example of use,
-see the [example program](https://github.com/poolpOrg/ipcmsg/blob/main/example/example.go)
+see the [examples directory](https://github.com/poolpOrg/ipcmsg/blob/main/examples/).
