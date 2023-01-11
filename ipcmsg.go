@@ -352,3 +352,12 @@ func (msg *IPCMessage) Fd() int {
 func (msg *IPCMessage) Reply(msgtype IPCMsgType, data interface{}, fd int) {
 	msg.channel.w <- createReply(*msg, msgtype, data, fd)
 }
+
+func (msg *IPCMessage) OneOf(msgtypes ...IPCMsgType) *IPCMessage {
+	for _, msgtype := range msgtypes {
+		if msg.Type() == msgtype {
+			return msg
+		}
+	}
+	panic("IPCMessage type assertion failed")
+}
