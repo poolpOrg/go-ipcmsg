@@ -29,7 +29,7 @@ func child() {
 	<-channel.Dispatch() // Run() and wait until it returns
 }
 
-func handlePING(msg ipcmsg.IPCMessage) {
+func handlePING(msg *ipcmsg.IPCMessage) {
 	var data string
 	msg.Unmarshal(&data)
 

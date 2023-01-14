@@ -30,7 +30,7 @@ func parent() {
 	<-channel.Dispatch()
 }
 
-func handleOPENFILE(msg ipcmsg.IPCMessage) {
+func handleOPENFILE(msg *ipcmsg.IPCMessage) {
 	var data string
 	msg.Unmarshal(&data)
 	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", data)

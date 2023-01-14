@@ -32,14 +32,14 @@ import (
 type Channel struct {
 	name string
 
-	w chan IPCMessage
-	r chan IPCMessage
+	w chan *IPCMessage
+	r chan *IPCMessage
 
 	muQueries sync.Mutex
-	queries   map[uuid.UUID]chan IPCMessage
+	queries   map[uuid.UUID]chan *IPCMessage
 
 	muHandlers sync.Mutex
-	handlers   map[IPCMsgType]func(IPCMessage)
+	handlers   map[IPCMsgType]func(*IPCMessage)
 }
 
 const IPCMSG_HEADER_SIZE = 31
@@ -76,10 +76,10 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 	pid := os.Getpid()
 
 	channel.name = name
-	channel.queries = make(map[uuid.UUID]chan IPCMessage)
-	channel.handlers = make(map[IPCMsgType]func(IPCMessage))
-	channel.w = make(chan IPCMessage)
-	channel.r = make(chan IPCMessage)
+	channel.queries = make(map[uuid.UUID]chan *IPCMessage)
+	channel.handlers = make(map[IPCMsgType]func(*IPCMessage))
+	channel.w = make(chan *IPCMessage)
+	channel.r = make(chan *IPCMessage)
 
 	// read message from write channel and send to peer fd
 	go func() {
@@ -196,7 +196,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				// extract the right amount of data from input buffer
 				// and if a FD is supposed to be attached, use the one
 				// we extracted from control message
-				msg := IPCMessage{}
+				msg := &IPCMessage{}
 				msg.channel = channel
 				msg.hdr = hdr
 				msg.hdr.Peerid = uint32(peerid)
@@ -258,13 +258,13 @@ func (channel *Channel) Dispatch() <-chan bool {
 	return done
 }
 
-func (channel *Channel) Handler(msgtype IPCMsgType, handler func(IPCMessage)) {
+func (channel *Channel) Handler(msgtype IPCMsgType, handler func(*IPCMessage)) {
 	channel.muHandlers.Lock()
 	defer channel.muHandlers.Unlock()
 	channel.handlers[msgtype] = handler
 }
 
-func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
+func createMessage(msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
 	if reflecType, exists := msgTypes[msgtype]; !exists {
 		panic("unregistered IPC message type")
 	} else {
@@ -280,7 +280,7 @@ func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 		panic(err)
 	}
 
-	msg := IPCMessage{}
+	msg := &IPCMessage{}
 	msg.hdr = ipcMsgHdr{}
 	msg.hdr.Id, _ = uuid.NewRandom()
 	msg.hdr.Type = msgtype
@@ -296,7 +296,7 @@ func createMessage(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
 	return msg
 }
 
-func createReply(msg IPCMessage, msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
+func createReply(msg IPCMessage, msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
 	reply := createMessage(msgtype, data, fd)
 	reply.hdr.Id = msg.hdr.Id
 	return reply
@@ -306,8 +306,8 @@ func (channel *Channel) Message(msgtype IPCMsgType, data interface{}, fd int) {
 	channel.w <- createMessage(msgtype, data, fd)
 }
 
-func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) IPCMessage {
-	wait := make(chan IPCMessage)
+func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
+	wait := make(chan *IPCMessage)
 	msg := createMessage(msgtype, data, fd)
 	channel.muQueries.Lock()
 	channel.queries[msg.hdr.Id] = wait
@@ -317,11 +317,11 @@ func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) IPCM
 	return <-wait
 }
 
-func (channel *Channel) ChannelIn() <-chan IPCMessage {
+func (channel *Channel) ChannelIn() <-chan *IPCMessage {
 	return channel.r
 }
 
-func (channel *Channel) ChannelOut() chan<- IPCMessage {
+func (channel *Channel) ChannelOut() chan<- *IPCMessage {
 	return channel.w
 }
 
