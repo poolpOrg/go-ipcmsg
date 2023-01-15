@@ -37,7 +37,7 @@ func parent() {
 	<-channel.Dispatch()
 }
 
-func handlePONG(msg ipcmsg.IPCMessage) {
+func handlePONG(msg *ipcmsg.IPCMessage) {
 	var data string
 	msg.Unmarshal(&data)
 
