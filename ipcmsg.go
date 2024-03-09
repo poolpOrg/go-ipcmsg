@@ -32,8 +32,9 @@ import (
 type Channel struct {
 	name string
 
-	w chan *IPCMessage
-	r chan *IPCMessage
+	w  chan *IPCMessage
+	r  chan *IPCMessage
+	mu sync.Mutex
 
 	muQueries sync.Mutex
 	queries   map[uuid.UUID]chan *IPCMessage
@@ -107,15 +108,8 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				continue
 			}
 
-			var stat syscall.Stat_t
-			if err := syscall.Fstat(fd, &stat); err != nil {
-				log.Fatal("NewChannel: syscall.Stat (#1): ", err)
-			}
-			if err := syscall.Fstat(msg.fd, &stat); err != nil {
-				log.Fatal("NewChannel: syscall.Stat (#2): fd=", msg.fd, err)
-			}
-
 			// an FD is attached, we need to craft a UnixRights control message
+			channel.mu.Lock()
 			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights(msg.fd), nil, 0)
 			if err != nil {
 				log.Fatal("NewChannel: syscall.Sendmsg (#2): ", err)
@@ -125,6 +119,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			if err != nil {
 				log.Fatal("NewChannel: syscall.Close: ", err)
 			}
+			channel.mu.Unlock()
 		}
 	}()
 
@@ -154,6 +149,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			// assume there's a control message and try parsing it,
 			// if it fails then we assume there's no FD
 			// caller can detect this is IPCMsgHdr.HasFlag is 1 and IpcMsg.Fd == -1
+			channel.mu.Lock()
 			cmsg := true
 			scms, err := syscall.ParseSocketControlMessage(cmsgbuf[:oobn])
 			if err != nil {
@@ -189,6 +185,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 					pfd = npfd
 				}
 			}
+			channel.mu.Unlock()
 
 			// we may have multiple messages crammed in our input buffer
 			// process them sequentially, parsing header and extracting data
