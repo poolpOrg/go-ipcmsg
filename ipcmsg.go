@@ -92,7 +92,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 
 			var packed bytes.Buffer
 			if err := binary.Write(&packed, binary.BigEndian, &msg.hdr); err != nil {
-				log.Fatal(err)
+				log.Fatal("NewChannel: binary.Write: ", err)
 			}
 			obuf = append(obuf, packed.Bytes()...)
 			obuf = append(obuf, msg.data...)
@@ -101,22 +101,29 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			if msg.hdr.HasFd == 0 {
 				err := syscall.Sendmsg(fd, obuf, nil, nil, 0)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatal("NewChannel: syscall.Sendmsg (#1): ", err)
 				}
 				// annnnnnnd... we're done for this msg
 				continue
 			}
 
-			// an FD is attached, we need to craft a UnixRights control message
-			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights([]int{msg.fd}...), nil, 0)
-			if err != nil {
-				log.Fatal(err)
+			var stat syscall.Stat_t
+			if err := syscall.Fstat(fd, &stat); err != nil {
+				log.Fatal("NewChannel: syscall.Stat (#1): ", err)
+			}
+			if err := syscall.Fstat(msg.fd, &stat); err != nil {
+				log.Fatal("NewChannel: syscall.Stat (#2): fd=", msg.fd, err)
 			}
 
-			// close the attached FD
+			// an FD is attached, we need to craft a UnixRights control message
+			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights(msg.fd), nil, 0)
+			if err != nil {
+				log.Fatal("NewChannel: syscall.Sendmsg (#2): ", err)
+			}
+
 			err = syscall.Close(msg.fd)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal("NewChannel: syscall.Close: ", err)
 			}
 		}
 	}()
@@ -133,9 +140,9 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			cmsgbuf := make([]byte, syscall.CmsgSpace(1*4))
 
 			// read a msg, for now only expects blocking IO
-			n, _, _, _, err := syscall.Recvmsg(fd, buf, cmsgbuf, 0)
+			n, oobn, _, _, err := syscall.Recvmsg(fd, buf, cmsgbuf, 0)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal("NewChannel: syscall.Recvmsg:", err)
 			}
 			if n == 0 {
 				break
@@ -148,10 +155,10 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 			// if it fails then we assume there's no FD
 			// caller can detect this is IPCMsgHdr.HasFlag is 1 and IpcMsg.Fd == -1
 			cmsg := true
-			scms, err := syscall.ParseSocketControlMessage(cmsgbuf)
+			scms, err := syscall.ParseSocketControlMessage(cmsgbuf[:oobn])
 			if err != nil {
 				if err != syscall.EINVAL {
-					log.Fatal(err)
+					log.Fatal("NewChannel: syscall.ParseSocketControlMessage:", err)
 				}
 				cmsg = false
 			}
@@ -165,7 +172,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				}
 				fds, err := syscall.ParseUnixRights(&scms[0])
 				if err != nil {
-					log.Fatal(err)
+					log.Fatal("NewChannel: syscall.ParseUnixRights:", err)
 				}
 
 				// we're only supposed to have one FD
@@ -173,6 +180,14 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 					log.Fatal("received more than one FD")
 				}
 				pfd = fds[0]
+				if npfd, err := syscall.Dup(pfd); err != nil {
+					log.Fatal("NewChannel: syscall.Dup:", err)
+				} else {
+					if err := syscall.Close(pfd); err != nil {
+						log.Fatal("NewChannel: syscall.Close:", err)
+					}
+					pfd = npfd
+				}
 			}
 
 			// we may have multiple messages crammed in our input buffer
@@ -184,7 +199,7 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 				hdr_bin.Write(buf[:IPCMSG_HEADER_SIZE])
 				err = binary.Read(&hdr_bin, binary.BigEndian, &hdr)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatal("NewChannel: binary.Read:", err)
 				}
 
 				// unsure if this can happen, sanity check
