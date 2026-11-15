@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
+	"fmt"
 	"log"
+	"math"
 	"os"
 	"reflect"
 	"sync"
@@ -32,9 +34,8 @@ import (
 type Channel struct {
 	name string
 
-	w  chan *IPCMessage
-	r  chan *IPCMessage
-	mu sync.Mutex
+	w chan *IPCMessage
+	r chan *IPCMessage
 
 	muQueries sync.Mutex
 	queries   map[uuid.UUID]chan *IPCMessage
@@ -44,6 +45,10 @@ type Channel struct {
 }
 
 const IPCMSG_HEADER_SIZE = 31
+
+// IPCMSG_MAX_DATA_SIZE is the largest encoded payload a message can carry,
+// the header stores the size on 16 bits.
+const IPCMSG_MAX_DATA_SIZE = math.MaxUint16
 
 type IPCMsgType uint32
 
@@ -56,6 +61,30 @@ type ipcMsgHdr struct {
 	Pid    uint32
 }
 
+// encode packs the header in network byte order, field after field.
+func (hdr *ipcMsgHdr) encode() []byte {
+	buf := make([]byte, IPCMSG_HEADER_SIZE)
+	copy(buf[0:16], hdr.Id[:])
+	binary.BigEndian.PutUint32(buf[16:20], uint32(hdr.Type))
+	binary.BigEndian.PutUint16(buf[20:22], hdr.Size)
+	buf[22] = hdr.HasFd
+	binary.BigEndian.PutUint32(buf[23:27], hdr.Peerid)
+	binary.BigEndian.PutUint32(buf[27:31], hdr.Pid)
+	return buf
+}
+
+// decodeHeader is the inverse of encode, buf holds at least a full header.
+func decodeHeader(buf []byte) ipcMsgHdr {
+	var hdr ipcMsgHdr
+	copy(hdr.Id[:], buf[0:16])
+	hdr.Type = IPCMsgType(binary.BigEndian.Uint32(buf[16:20]))
+	hdr.Size = binary.BigEndian.Uint16(buf[20:22])
+	hdr.HasFd = buf[22]
+	hdr.Peerid = binary.BigEndian.Uint32(buf[23:27])
+	hdr.Pid = binary.BigEndian.Uint32(buf[27:31])
+	return hdr
+}
+
 type IPCMessage struct {
 	channel *Channel
 	hdr     ipcMsgHdr
@@ -63,15 +92,27 @@ type IPCMessage struct {
 	data    []byte
 }
 
-var msgTypes = make(map[IPCMsgType]string)
+var muMsgTypes sync.Mutex
+var msgTypes = make(map[IPCMsgType]reflect.Type)
 
+// NewIPCMsgType registers the Go type of msgObject as the payload type of
+// a new message type.
 func NewIPCMsgType(msgObject interface{}) IPCMsgType {
-	msgType := IPCMsgType(len(msgTypes))
-	msgTypes[msgType] = reflect.TypeOf(msgObject).Name()
+	msgReflectType := reflect.TypeOf(msgObject)
+	if msgReflectType == nil {
+		panic("NewIPCMsgType: nil message object")
+	}
 	gob.Register(msgObject)
+
+	muMsgTypes.Lock()
+	defer muMsgTypes.Unlock()
+	msgType := IPCMsgType(len(msgTypes))
+	msgTypes[msgType] = msgReflectType
 	return msgType
 }
 
+// NewChannel wraps the stream socket fd, connected to the process peerid.
+// The channel owns fd from then on.
 func NewChannel(name string, peerid int, fd int) *Channel {
 	channel := &Channel{}
 	pid := os.Getpid()
@@ -82,171 +123,146 @@ func NewChannel(name string, peerid int, fd int) *Channel {
 	channel.w = make(chan *IPCMessage)
 	channel.r = make(chan *IPCMessage)
 
-	// read message from write channel and send to peer fd
-	go func() {
-		for msg := range channel.w {
-			msg.hdr.Peerid = uint32(peerid)
-			msg.hdr.Pid = uint32(pid)
-
-			// pack msg header and msg data into output buf
-			obuf := make([]byte, 0)
-
-			var packed bytes.Buffer
-			if err := binary.Write(&packed, binary.BigEndian, &msg.hdr); err != nil {
-				log.Fatal("NewChannel: binary.Write: ", err)
-			}
-			obuf = append(obuf, packed.Bytes()...)
-			obuf = append(obuf, msg.data...)
-
-			// if msg has no FD attached, send as is
-			if msg.hdr.HasFd == 0 {
-				err := syscall.Sendmsg(fd, obuf, nil, nil, 0)
-				if err != nil {
-					log.Fatal("NewChannel: syscall.Sendmsg (#1): ", err)
-				}
-				// annnnnnnd... we're done for this msg
-				continue
-			}
-
-			// an FD is attached, we need to craft a UnixRights control message
-			channel.mu.Lock()
-			err := syscall.Sendmsg(fd, obuf, syscall.UnixRights(msg.fd), nil, 0)
-			if err != nil {
-				log.Fatal("NewChannel: syscall.Sendmsg (#2): ", err)
-			}
-
-			err = syscall.Close(msg.fd)
-			if err != nil {
-				log.Fatal("NewChannel: syscall.Close: ", err)
-			}
-			channel.mu.Unlock()
-		}
-	}()
-
-	// read message from peer fd and write to read channel
-	go func() {
-		// oh gosh... the fun begins
-		for {
-
-			// a buffer to hold the data
-			buf := make([]byte, 64*1024)
-
-			// a cmsgbuf for control message, we only expect 1 fd (4 bytes)
-			cmsgbuf := make([]byte, syscall.CmsgSpace(1*4))
-
-			// read a msg, for now only expects blocking IO
-			n, oobn, _, _, err := syscall.Recvmsg(fd, buf, cmsgbuf, 0)
-			if err != nil {
-				log.Fatal("NewChannel: syscall.Recvmsg:", err)
-			}
-			if n == 0 {
-				break
-			}
-
-			buf = buf[:n]
-
-			// sometimes we have an FD, sometimes we don't
-			// assume there's a control message and try parsing it,
-			// if it fails then we assume there's no FD
-			// caller can detect this is IPCMsgHdr.HasFlag is 1 and IpcMsg.Fd == -1
-			channel.mu.Lock()
-			cmsg := true
-			scms, err := syscall.ParseSocketControlMessage(cmsgbuf[:oobn])
-			if err != nil {
-				if err != syscall.EINVAL {
-					log.Fatal("NewChannel: syscall.ParseSocketControlMessage:", err)
-				}
-				cmsg = false
-			}
-
-			pfd := -1
-			if cmsg {
-				// we have a control message ...
-				// we're only supposed to have one
-				if len(scms) != 1 {
-					log.Fatal("received more than one control message")
-				}
-				fds, err := syscall.ParseUnixRights(&scms[0])
-				if err != nil {
-					log.Fatal("NewChannel: syscall.ParseUnixRights:", err)
-				}
-
-				// we're only supposed to have one FD
-				if len(fds) != 1 {
-					log.Fatal("received more than one FD")
-				}
-				pfd = fds[0]
-				if npfd, err := syscall.Dup(pfd); err != nil {
-					log.Fatal("NewChannel: syscall.Dup:", err)
-				} else {
-					if err := syscall.Close(pfd); err != nil {
-						log.Fatal("NewChannel: syscall.Close:", err)
-					}
-					pfd = npfd
-				}
-			}
-			channel.mu.Unlock()
-
-			// we may have multiple messages crammed in our input buffer
-			// process them sequentially, parsing header and extracting data
-			for {
-				// first, decode a header
-				var hdr_bin bytes.Buffer
-				var hdr ipcMsgHdr
-				hdr_bin.Write(buf[:IPCMSG_HEADER_SIZE])
-				err = binary.Read(&hdr_bin, binary.BigEndian, &hdr)
-				if err != nil {
-					log.Fatal("NewChannel: binary.Read:", err)
-				}
-
-				// unsure if this can happen, sanity check
-				if len(buf) < IPCMSG_HEADER_SIZE+int(hdr.Size) {
-					log.Fatal("packet too small")
-				}
-
-				// now that we have a header, reset peerid and pid
-				// extract the right amount of data from input buffer
-				// and if a FD is supposed to be attached, use the one
-				// we extracted from control message
-				msg := &IPCMessage{}
-				msg.channel = channel
-				msg.hdr = hdr
-				msg.hdr.Peerid = uint32(peerid)
-				msg.hdr.Pid = uint32(pid)
-				msg.data = buf[IPCMSG_HEADER_SIZE : IPCMSG_HEADER_SIZE+int(msg.hdr.Size)]
-				msg.fd = -1
-				if msg.hdr.HasFd != 0 {
-					if pfd == -1 {
-						// FD exhaustion on receiving end most-likely
-					}
-					msg.fd = pfd
-					pfd = -1
-				}
-
-				// discard consumed data from input buffer
-				buf = buf[IPCMSG_HEADER_SIZE+int(msg.hdr.Size):]
-
-				// message is ready for caller
-				channel.r <- msg
-
-				// input buffer is empty, go back to read loop
-				if len(buf) == 0 {
-					break
-				}
-
-				// not sure if short reads can happen,
-				// if so they'll be caught by the earlier log.Fatal()
-				// and I'll move the input buffer out of the goroutine
-				// into the Channel
-			}
-		}
-	}()
+	go channel.writer(fd, peerid, pid)
+	go channel.reader(fd, peerid, pid)
 
 	return channel
 }
 
+// writer reads messages from the write channel and sends them to the peer.
+func (channel *Channel) writer(fd int, peerid int, pid int) {
+	for msg := range channel.w {
+		msg.hdr.Peerid = uint32(peerid)
+		msg.hdr.Pid = uint32(pid)
+
+		obuf := append(msg.hdr.encode(), msg.data...)
+		if err := sendAll(fd, obuf, msg.fd); err != nil {
+			log.Fatal("NewChannel: syscall.Sendmsg: ", err)
+		}
+
+		// the descriptor now lives in the peer, our copy is no longer
+		// needed: there is nothing left to do should closing it fail.
+		if msg.hdr.HasFd != 0 {
+			syscall.Close(msg.fd)
+		}
+	}
+}
+
+// sendAll writes buf to the stream socket fd, attaching msgfd to the
+// first bytes when there is one, and keeps going on short writes.
+func sendAll(fd int, buf []byte, msgfd int) error {
+	var oob []byte
+	if msgfd != -1 {
+		oob = syscall.UnixRights(msgfd)
+	}
+	for len(buf) > 0 {
+		n, err := syscall.SendmsgN(fd, buf, oob, nil, 0)
+		if err != nil {
+			return err
+		}
+		buf = buf[n:]
+		oob = nil
+	}
+	return nil
+}
+
+// parseFd extracts the single file descriptor carried by the control
+// messages received alongside a message.
+func parseFd(oob []byte) (int, error) {
+	scms, err := syscall.ParseSocketControlMessage(oob)
+	if err != nil {
+		return -1, err
+	}
+	if len(scms) != 1 {
+		return -1, fmt.Errorf("expected one control message, got %d", len(scms))
+	}
+	fds, err := syscall.ParseUnixRights(&scms[0])
+	if err != nil {
+		return -1, err
+	}
+	if len(fds) != 1 {
+		for _, pfd := range fds {
+			syscall.Close(pfd)
+		}
+		return -1, fmt.Errorf("expected one file descriptor, got %d", len(fds))
+	}
+	return fds[0], nil
+}
+
+// reader receives from the peer, reassembles messages whatever way the
+// stream was cut, and hands them to the read channel. Descriptors arrive
+// with the read holding the first byte of their message and at most one
+// per read, so they are matched in order to the messages announcing one.
+func (channel *Channel) reader(fd int, peerid int, pid int) {
+	buf := make([]byte, 64*1024)
+	cmsgbuf := make([]byte, syscall.CmsgSpace(16*4))
+	var pending []byte
+	var fds []int
+
+	for {
+		n, oobn, _, _, err := syscall.Recvmsg(fd, buf, cmsgbuf, 0)
+		if err != nil && err != syscall.ECONNRESET {
+			log.Fatal("NewChannel: syscall.Recvmsg: ", err)
+		}
+
+		// peer is gone, ECONNRESET is how Linux reports it when the
+		// peer left messages unread
+		if n <= 0 {
+			if len(pending) != 0 {
+				log.Fatalf("channel %s: peer closed in the middle of a message", channel.name)
+			}
+			close(channel.r)
+			return
+		}
+
+		if oobn > 0 {
+			pfd, err := parseFd(cmsgbuf[:oobn])
+			if err != nil {
+				log.Fatal("NewChannel: control message: ", err)
+			}
+			fds = append(fds, pfd)
+		}
+
+		pending = append(pending, buf[:n]...)
+		for len(pending) >= IPCMSG_HEADER_SIZE {
+			hdr := decodeHeader(pending)
+			total := IPCMSG_HEADER_SIZE + int(hdr.Size)
+			if len(pending) < total {
+				break
+			}
+
+			msg := &IPCMessage{}
+			msg.channel = channel
+			msg.hdr = hdr
+			msg.hdr.Peerid = uint32(peerid)
+			msg.hdr.Pid = uint32(pid)
+			msg.data = append([]byte(nil), pending[IPCMSG_HEADER_SIZE:total]...)
+			msg.fd = -1
+
+			// a message announcing a descriptor that did not make it
+			// (descriptor exhaustion on our side) is delivered with
+			// Fd() == -1
+			if msg.hdr.HasFd != 0 && len(fds) > 0 {
+				msg.fd = fds[0]
+				fds = fds[1:]
+			}
+
+			pending = pending[total:]
+			channel.r <- msg
+		}
+
+		if len(fds) > 0 && len(pending) == 0 {
+			log.Fatalf("channel %s: received a file descriptor no message announced", channel.name)
+		}
+	}
+}
+
+// Dispatch routes replies to their pending Query and other messages to
+// the handler registered for their type. The returned channel receives
+// once the peer has closed the connection, at which point pending queries
+// are released with a nil reply.
 func (channel *Channel) Dispatch() <-chan bool {
-	done := make(chan bool)
+	done := make(chan bool, 1)
 	go func() {
 		for msg := range channel.r {
 			channel.muQueries.Lock()
@@ -258,13 +274,22 @@ func (channel *Channel) Dispatch() <-chan bool {
 				continue
 			}
 
+			channel.muHandlers.Lock()
 			handler, exists := channel.handlers[msg.hdr.Type]
+			channel.muHandlers.Unlock()
 			if !exists {
 				log.Fatalf("channel %s: received unexpected message type %d", channel.name, msg.hdr.Type)
 			}
 
 			handler(msg)
 		}
+
+		channel.muQueries.Lock()
+		for id, callbackChannel := range channel.queries {
+			close(callbackChannel)
+			delete(channel.queries, id)
+		}
+		channel.muQueries.Unlock()
 		done <- true
 	}()
 	return done
@@ -277,12 +302,17 @@ func (channel *Channel) Handler(msgtype IPCMsgType, handler func(*IPCMessage)) {
 }
 
 func createMessage(msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
-	if reflecType, exists := msgTypes[msgtype]; !exists {
+	muMsgTypes.Lock()
+	msgReflectType, exists := msgTypes[msgtype]
+	muMsgTypes.Unlock()
+	if !exists {
 		panic("unregistered IPC message type")
-	} else {
-		if reflect.TypeOf(data).Name() != reflecType {
-			panic("creating IPC message with invalid data type")
-		}
+	}
+	if reflect.TypeOf(data) != msgReflectType {
+		panic("creating IPC message with invalid data type")
+	}
+	if fd < -1 {
+		panic("creating IPC message with invalid file descriptor")
 	}
 
 	var buf bytes.Buffer
@@ -291,12 +321,15 @@ func createMessage(msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
 	if err != nil {
 		panic(err)
 	}
+	if buf.Len() > IPCMSG_MAX_DATA_SIZE {
+		panic(fmt.Sprintf("IPC message data is %d bytes, more than the %d allowed", buf.Len(), IPCMSG_MAX_DATA_SIZE))
+	}
 
 	msg := &IPCMessage{}
 	msg.hdr = ipcMsgHdr{}
 	msg.hdr.Id, _ = uuid.NewRandom()
 	msg.hdr.Type = msgtype
-	msg.hdr.Size = uint16(len(buf.Bytes()))
+	msg.hdr.Size = uint16(buf.Len())
 	if fd == -1 {
 		msg.hdr.HasFd = 0
 	} else {
@@ -314,12 +347,16 @@ func createReply(msg IPCMessage, msgtype IPCMsgType, data interface{}, fd int) *
 	return reply
 }
 
+// Message sends data to the peer. The channel takes ownership of fd, if
+// any, and closes it once sent.
 func (channel *Channel) Message(msgtype IPCMsgType, data interface{}, fd int) {
 	channel.w <- createMessage(msgtype, data, fd)
 }
 
+// Query sends data to the peer and waits for its reply, which Dispatch
+// must be running to route. It returns nil if the peer goes away first.
 func (channel *Channel) Query(msgtype IPCMsgType, data interface{}, fd int) *IPCMessage {
-	wait := make(chan *IPCMessage)
+	wait := make(chan *IPCMessage, 1)
 	msg := createMessage(msgtype, data, fd)
 	channel.muQueries.Lock()
 	channel.queries[msg.hdr.Id] = wait
@@ -357,6 +394,8 @@ func (msg *IPCMessage) HasFd() bool {
 	return msg.hdr.HasFd == 1
 }
 
+// Fd returns the descriptor received with the message, -1 if none. It is
+// the caller's to close.
 func (msg *IPCMessage) Fd() int {
 	return msg.fd
 }
