@@ -19,7 +19,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
+	"syscall"
 
 	"github.com/poolpOrg/go-ipcmsg"
 )
@@ -29,11 +29,13 @@ func parent() {
 	channel := ipcmsg.NewChannel("parent<->child", pid, fd)
 	channel.Handler(IPCMSG_PONG, handlePONG)
 
-	fp, err := os.Open("/etc/passwd")
+	// the channel takes ownership of the descriptor and closes it once
+	// sent, so hand it a raw one rather than an os.File still owning it
+	file, err := syscall.Open("/etc/passwd", syscall.O_RDONLY, 0)
 	if err != nil {
-		log.Fatal("could not open")
+		log.Fatal("could not open: ", err)
 	}
-	channel.Message(IPCMSG_PING, "PING ?", int(fp.Fd()))
+	channel.Message(IPCMSG_PING, "PING ?", file)
 	<-channel.Dispatch()
 }
 
