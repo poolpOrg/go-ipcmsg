@@ -78,7 +78,7 @@ func fork_child() (int, int) {
 		log.Fatal(err)
 	}
 
-	if syscall.Close(sp[0]) != nil {
+	if err = syscall.Close(sp[0]); err != nil {
 		log.Fatal(err)
 	}
 

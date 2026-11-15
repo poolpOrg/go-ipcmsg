@@ -18,7 +18,7 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"syscall"
 
 	"github.com/poolpOrg/go-ipcmsg"
 )
@@ -35,10 +35,12 @@ func handleOPENFILE(msg *ipcmsg.IPCMessage) {
 	msg.Unmarshal(&data)
 	fmt.Printf("parent: got IPCMSG_OPENFILE from child: %s\n", data)
 
-	fp, err := os.Open(data)
+	// the channel takes ownership of the descriptor and closes it once
+	// sent, so hand it a raw one rather than an os.File still owning it
+	fd, err := syscall.Open(data, syscall.O_RDONLY, 0)
 	if err != nil {
 		msg.Reply(IPCMSG_OPENFILE, "NOPE !", -1)
 	} else {
-		msg.Reply(IPCMSG_OPENFILE, "OK !", int(fp.Fd()))
+		msg.Reply(IPCMSG_OPENFILE, "OK !", fd)
 	}
 }
